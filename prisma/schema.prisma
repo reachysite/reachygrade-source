@@ -1,0 +1,64 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String            @id @default(cuid())
+  name          String
+  email         String            @unique
+  password      String
+  role          String            @default("STUDENT") // STUDENT, TEACHER, or ADMIN
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  assignments   Assignment[]      @relation("TeacherAssignments")
+  submissions   Submission[]
+  codes         InvitationCode[]  @relation("CodeCreator")
+}
+
+model Assignment {
+  id          String       @id @default(cuid())
+  title       String
+  description String
+  modelAnswer String       // Expected answer for AI grading
+  dueDate     DateTime?
+  totalMarks  Int          @default(100)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  teacherId   String
+  teacher     User         @relation("TeacherAssignments", fields: [teacherId], references: [id])
+  submissions Submission[]
+}
+
+model Submission {
+  id              String     @id @default(cuid())
+  content         String     // Extracted text from uploaded file
+  fileName        String
+  fileType        String     // pdf, docx, txt
+  autoGrade       Int?       // 0 to totalMarks
+  autoFeedback    String?    // AI-generated feedback
+  teacherGrade    Int?       // Teacher override grade
+  teacherFeedback String?    // Teacher's additional feedback
+  assignmentId    String
+  studentId       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student         User       @relation(fields: [studentId], references: [id])
+}
+
+model InvitationCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  isActive    Boolean  @default(true)
+  maxUses     Int      @default(1)
+  usedCount   Int      @default(0)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  creator     User     @relation("CodeCreator", fields: [createdBy], references: [id])
+}

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import ZAI from "z-ai-web-dev-sdk";
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +20,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch submission with assignment and model answer
     const submission = await db.submission.findUnique({
       where: { id: submissionId },
       include: {
@@ -43,15 +41,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (submission.autoGrade !== null) {
+    if (submission.autoGrade !== null && body.force !== true) {
       return NextResponse.json(
         { error: "This submission has already been graded" },
         { status: 400 }
       );
     }
 
-    // Use LLM to grade the submission
-    const zai = await ZAI.create();
+    console.log(`[GRADE] Starting grading for submission ${submissionId}, assignment: ${submission.assignment.title}`);
 
     const gradingPrompt = `You are an expert academic grader. Grade the following student submission against the model answer.
 
@@ -59,10 +56,10 @@ ASSIGNMENT: ${submission.assignment.title}
 DESCRIPTION: ${submission.assignment.description}
 
 MODEL ANSWER (Expected Answer):
-${submission.assignment.modelAnswer}
+ ${submission.assignment.modelAnswer}
 
 STUDENT SUBMISSION:
-${submission.content}
+ ${submission.content}
 
 TOTAL MARKS: ${submission.assignment.totalMarks}
 
@@ -81,24 +78,124 @@ Be fair, encouraging but honest. Consider:
 3. Understanding - does the student demonstrate comprehension?
 4. Presentation and clarity of the answer`;
 
-    const completion = await zai.chat.completions.create({
-      messages: [
-        {
-          role: "assistant",
-          content:
-            "You are an expert academic grader. Always respond with valid JSON only, no markdown formatting.",
-        },
-        {
-          role: "user",
-          content: gradingPrompt,
-        },
-      ],
-      thinking: { type: "disabled" },
-    });
+    let responseText = "";
 
-    let responseText = completion.choices[0]?.message?.content || "";
+    // Method 1: Try z-ai-web-dev-sdk (works in sandbox)
+    try {
+      console.log("[GRADE] Trying Z.AI SDK...");
+      const ZAI = await import("z-ai-web-dev-sdk");
+      const zai = await ZAI.default.create();
+      const completion = await zai.chat.completions.create({
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "You are an expert academic grader. Always respond with valid JSON only, no markdown formatting.",
+          },
+          {
+            role: "user",
+            content: gradingPrompt,
+          },
+        ],
+        thinking: { type: "disabled" },
+      });
+      responseText = completion.choices[0]?.message?.content || "";
+      if (responseText) {
+        console.log("[GRADE] Z.AI SDK succeeded, got response");
+      } else {
+        console.log("[GRADE] Z.AI SDK returned empty response");
+      }
+    } catch (err) {
+      console.error("[GRADE] Z.AI SDK failed:", err);
+    }
 
-    // Clean up response - remove markdown code blocks if present
+    // Method 2: Try Google Gemini (works locally with API key)
+    if (!responseText) {
+      const geminiKey = process.env.GEMINI_API_KEY;
+      if (geminiKey) {
+        try {
+          console.log("[GRADE] Trying Gemini...");
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: gradingPrompt }] }],
+                generationConfig: {
+                  temperature: 0.3,
+                  maxOutputTokens: 1024,
+                },
+              }),
+            }
+          );
+          const data = await res.json();
+          responseText =
+            data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (responseText) {
+            console.log("[GRADE] Gemini succeeded");
+          } else {
+            console.log("[GRADE] Gemini returned empty response");
+          }
+        } catch (err) {
+          console.error("[GRADE] Gemini failed:", err);
+        }
+      } else {
+        console.log("[GRADE] No GEMINI_API_KEY configured");
+      }
+    }
+
+    // Method 3: Try Groq (free tier)
+    if (!responseText) {
+      const groqKey = process.env.GROQ_API_KEY;
+      if (groqKey) {
+        try {
+          console.log("[GRADE] Trying Groq...");
+          const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${groqKey}`,
+            },
+            body: JSON.stringify({
+              model: "llama-3.3-70b-versatile",
+              messages: [
+                {
+                  role: "system",
+                  content: "You are an expert academic grader. Always respond with valid JSON only.",
+                },
+                {
+                  role: "user",
+                  content: gradingPrompt,
+                },
+              ],
+              temperature: 0.3,
+              max_tokens: 1024,
+            }),
+          });
+          const data = await res.json();
+          responseText = data?.choices?.[0]?.message?.content || "";
+          if (responseText) {
+            console.log("[GRADE] Groq succeeded");
+          } else {
+            console.log("[GRADE] Groq returned empty response");
+          }
+        } catch (err) {
+          console.error("[GRADE] Groq failed:", err);
+        }
+      } else {
+        console.log("[GRADE] No GROQ_API_KEY configured");
+      }
+    }
+
+    if (!responseText) {
+      console.error("[GRADE] All AI methods failed for submission", submissionId);
+      return NextResponse.json(
+        { error: "AI grading service is currently unavailable. Your submission is saved and will be graded when the service is back." },
+        { status: 503 }
+      );
+    }
+
     responseText = responseText
       .replace(/```json\n?/g, "")
       .replace(/```\n?/g, "")
@@ -108,7 +205,7 @@ Be fair, encouraging but honest. Consider:
     try {
       gradingResult = JSON.parse(responseText);
     } catch {
-      // If JSON parsing fails, try to extract score from text
+      console.log("[GRADE] JSON parse failed, attempting regex extraction");
       const scoreMatch = responseText.match(/"score"\s*:\s*(\d+)/);
       const score = scoreMatch
         ? Math.min(
@@ -125,7 +222,6 @@ Be fair, encouraging but honest. Consider:
       };
     }
 
-    // Ensure score is within bounds
     const finalScore = Math.max(
       0,
       Math.min(
@@ -134,7 +230,8 @@ Be fair, encouraging but honest. Consider:
       )
     );
 
-    // Update submission with auto-grade
+    console.log(`[GRADE] Final score: ${finalScore}/${submission.assignment.totalMarks}`);
+
     const updatedSubmission = await db.submission.update({
       where: { id: submissionId },
       data: {
@@ -161,7 +258,7 @@ Be fair, encouraging but honest. Consider:
       },
     });
   } catch (error) {
-    console.error("Error grading submission:", error);
+    console.error("[GRADE] Error grading submission:", error);
     return NextResponse.json(
       { error: "Failed to grade submission. Please try again." },
       { status: 500 }

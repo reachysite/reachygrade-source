@@ -78,8 +78,30 @@ export default function StudentDashboard() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showConfirmStep, setShowConfirmStep] = useState(false);
   const [confirmChecked, setConfirmChecked] = useState(false);
-  const [grading, setGrading] = useState(false);
+  const [grading, setGrading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
+
+  const handleRegrade = async (submissionId: string) => {
+    setGrading(prev => ({ ...prev, [submissionId]: true }));
+    try {
+      const res = await fetch("/api/grade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ submissionId, force: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Grading failed. Try again later.");
+      } else {
+        toast.success("Grading complete!");
+      }
+    } catch {
+      toast.error("Grading request failed.");
+    } finally {
+      setGrading(prev => ({ ...prev, [submissionId]: false }));
+      await Promise.all([fetchSubmissions(), fetchAnalytics()]);
+    }
+  };
 
   const fetchAssignments = useCallback(async () => {
     const res = await fetch("/api/assignments");
@@ -152,16 +174,21 @@ export default function StudentDashboard() {
       setUploadSuccess(true);
       toast.success("Assignment submitted! AI is grading your work...");
 
-      setGrading(true);
+      setGrading(prev => ({ ...prev, [data.submission.id]: true }));
       try {
-        await fetch("/api/grade", {
+        const gradeRes = await fetch("/api/grade", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ submissionId: data.submission.id }),
         });
-        toast.success("Grading complete! Check your grades.");
+        const gradeData = await gradeRes.json();
+        if (!gradeRes.ok) {
+          toast.error(gradeData.error || "Grading failed. Teacher will review later.");
+        } else {
+          toast.success("Grading complete! Check your grades.");
+        }
       } catch { toast.error("Grading is taking longer than expected."); }
-      finally { setGrading(false); }
+      finally { setGrading(prev => ({ ...prev, [data.submission.id]: false })); }
 
       await Promise.all([fetchAssignments(), fetchSubmissions(), fetchAnalytics()]);
     } catch { setError("Upload failed. Please try again."); }
@@ -219,7 +246,6 @@ export default function StudentDashboard() {
     <div className="h-screen bg-slate-50/80 gradient-mesh flex">
       {/* Sidebar */}
       <aside className={`${sidebarOpen ? "w-64" : "w-[72px]"} border-r border-slate-200/60 bg-white/70 backdrop-blur-xl flex flex-col transition-all duration-300 ease-in-out shrink-0`}>
-        {/* Sidebar Header */}
         <div className="p-4 flex items-center justify-between">
           {sidebarOpen && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2.5">
@@ -229,43 +255,23 @@ export default function StudentDashboard() {
               <span className="font-bold text-sm tracking-tight text-slate-900">ReachyGrade</span>
             </motion.div>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="w-8 h-8 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-          >
+          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)} className="w-8 h-8 text-slate-400 hover:text-slate-600 hover:bg-slate-100">
             {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
           </Button>
         </div>
-
         <Separator className="mx-3" />
-
-        {/* Nav Items */}
         <nav className="flex-1 p-3 space-y-1">
           {sidebarItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
-                  isActive
-                    ? "bg-emerald-50 text-emerald-700 shadow-sm shadow-emerald-100/50"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100/80"
-                }`}
-              >
+              <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${isActive ? "bg-emerald-50 text-emerald-700 shadow-sm shadow-emerald-100/50" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100/80"}`}>
                 <item.icon className={`w-[18px] h-[18px] shrink-0 ${isActive ? "text-emerald-600" : ""}`} />
                 {sidebarOpen && <span>{item.label}</span>}
-                {isActive && sidebarOpen && (
-                  <motion.div layoutId="sidebar-active" className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                )}
+                {isActive && sidebarOpen && <motion.div layoutId="sidebar-active" className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />}
               </button>
             );
           })}
         </nav>
-
-        {/* User Profile */}
         <div className="p-3 border-t border-slate-200/60">
           <div className={`flex items-center ${sidebarOpen ? "gap-3" : "justify-center"} p-2 rounded-xl hover:bg-slate-100/80 transition-colors`}>
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-sm shrink-0">
@@ -289,7 +295,6 @@ export default function StudentDashboard() {
       {/* Main Content */}
       <main className="flex-1 min-w-0 overflow-auto">
         <div className="p-6 lg:p-8 max-w-[1200px]">
-          {/* Mobile Header */}
           <div className="lg:hidden flex items-center justify-between mb-6">
             <div className="flex items-center gap-2.5">
               <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden">
@@ -305,15 +310,13 @@ export default function StudentDashboard() {
           </div>
 
           <AnimatePresence mode="wait">
-            {/* Overview */}
+            {/* ===== OVERVIEW ===== */}
             {activeTab === "overview" && (
               <motion.div key="overview" {...pageTransition} className="space-y-6">
                 <div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
                   <p className="text-slate-500 text-sm mt-1">Welcome back, {user?.name?.split(" ")[0]}! Here&apos;s your academic overview.</p>
                 </div>
-
-                {/* Stat Cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {[
                     { label: "Total Assignments", value: analytics?.totalAssignments || 0, icon: BookOpen, color: "from-blue-500 to-indigo-500", bg: "bg-blue-50" },
@@ -321,20 +324,13 @@ export default function StudentDashboard() {
                     { label: "Graded", value: analytics?.gradedCount || 0, icon: Sparkles, color: "from-amber-500 to-orange-500", bg: "bg-amber-50" },
                     { label: "Average Grade", value: analytics?.averageGrade || 0, icon: TrendingUp, color: "from-violet-500 to-purple-500", bg: "bg-violet-50", suffix: "%" },
                   ].map((stat, i) => (
-                    <motion.div
-                      key={stat.label}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.4, delay: i * 0.08 }}
-                    >
+                    <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: i * 0.08 }}>
                       <Card className="border-0 shadow-sm shadow-slate-900/[0.02] card-hover overflow-hidden">
                         <CardContent className="p-5">
                           <div className="flex items-start justify-between">
                             <div>
                               <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{stat.label}</p>
-                              <p className="text-3xl font-bold text-slate-900 mt-2 tracking-tight">
-                                {stat.value}{stat.suffix || ""}
-                              </p>
+                              <p className="text-3xl font-bold text-slate-900 mt-2 tracking-tight">{stat.value}{stat.suffix || ""}</p>
                             </div>
                             <div className={`w-10 h-10 rounded-xl ${stat.bg} flex items-center justify-center`}>
                               <stat.icon className={`w-5 h-5 bg-gradient-to-r ${stat.color} bg-clip-text`} style={{ color: stat.color.includes("blue") ? "#3b82f6" : stat.color.includes("emerald") ? "#10b981" : stat.color.includes("amber") ? "#f59e0b" : "#8b5cf6" }} />
@@ -345,14 +341,10 @@ export default function StudentDashboard() {
                     </motion.div>
                   ))}
                 </div>
-
                 <div className="grid lg:grid-cols-2 gap-6">
-                  {/* Pending */}
                   <Card className="border-0 shadow-sm shadow-slate-900/[0.02]">
                     <CardHeader className="pb-3 px-6 pt-5">
-                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700">
-                        <Clock className="w-4 h-4 text-amber-500" /> Pending Submissions
-                      </CardTitle>
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700"><Clock className="w-4 h-4 text-amber-500" /> Pending Submissions</CardTitle>
                     </CardHeader>
                     <CardContent className="px-6 pb-5">
                       {assignments.filter(a => !a.hasSubmitted).length === 0 ? (
@@ -365,18 +357,12 @@ export default function StudentDashboard() {
                         <div className="space-y-2.5">
                           {assignments.filter(a => !a.hasSubmitted).slice(0, 4).map((a) => (
                             <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl bg-amber-50/60 border border-amber-100/60 hover:bg-amber-50 transition-colors group">
-                              <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                                <Inbox className="w-4 h-4 text-amber-600" />
-                              </div>
+                              <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><Inbox className="w-4 h-4 text-amber-600" /></div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-slate-700 truncate">{a.title}</p>
                                 {a.dueDate && <p className="text-[11px] text-slate-400">Due: {format(new Date(a.dueDate), "MMM d, yyyy")}</p>}
                               </div>
-                              <Button
-                                size="sm"
-                                onClick={() => { setSelectedAssignment(a); setShowSubmitDialog(true); setUploadSuccess(false); }}
-                                className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm shadow-emerald-200/50 h-8 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
+                              <Button size="sm" onClick={() => { setSelectedAssignment(a); setShowSubmitDialog(true); setUploadSuccess(false); }} className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm shadow-emerald-200/50 h-8 text-xs opacity-0 group-hover:opacity-100 transition-opacity">
                                 Submit <ChevronRight className="w-3 h-3 ml-0.5" />
                               </Button>
                             </div>
@@ -385,13 +371,9 @@ export default function StudentDashboard() {
                       )}
                     </CardContent>
                   </Card>
-
-                  {/* Recent Grades */}
                   <Card className="border-0 shadow-sm shadow-slate-900/[0.02]">
                     <CardHeader className="pb-3 px-6 pt-5">
-                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700">
-                        <Star className="w-4 h-4 text-emerald-500" /> Recent Grades
-                      </CardTitle>
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700"><Star className="w-4 h-4 text-emerald-500" /> Recent Grades</CardTitle>
                     </CardHeader>
                     <CardContent className="px-6 pb-5">
                       {submissions.filter(s => s.autoGrade !== null).length === 0 ? (
@@ -407,16 +389,12 @@ export default function StudentDashboard() {
                             const total = sub.assignment?.totalMarks || 100;
                             return (
                               <div key={sub.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors">
-                                <div className={`w-10 h-10 rounded-xl border flex items-center justify-center font-bold text-sm ${getGradeBg(grade, total)}`}>
-                                  {grade}
-                                </div>
+                                <div className={`w-10 h-10 rounded-xl border flex items-center justify-center font-bold text-sm ${getGradeBg(grade, total)}`}>{grade}</div>
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium text-slate-700 truncate">{sub.assignment?.title}</p>
                                   <p className="text-[11px] text-slate-400">{format(new Date(sub.createdAt), "MMM d, yyyy")}</p>
                                 </div>
-                                {sub.teacherGrade !== null && (
-                                  <Badge className="bg-violet-100 text-violet-600 border-0 text-[10px] font-medium">Reviewed</Badge>
-                                )}
+                                {sub.teacherGrade !== null && <Badge className="bg-violet-100 text-violet-600 border-0 text-[10px] font-medium">Reviewed</Badge>}
                               </div>
                             );
                           })}
@@ -428,7 +406,7 @@ export default function StudentDashboard() {
               </motion.div>
             )}
 
-            {/* Assignments */}
+            {/* ===== ASSIGNMENTS ===== */}
             {activeTab === "assignments" && (
               <motion.div key="assignments" {...pageTransition} className="space-y-6">
                 <div>
@@ -450,11 +428,7 @@ export default function StudentDashboard() {
                             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                               <div className="flex items-start gap-4 flex-1 min-w-0">
                                 <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${a.hasSubmitted ? "bg-emerald-50" : "bg-slate-100"}`}>
-                                  {a.hasSubmitted ? (
-                                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                                  ) : (
-                                    <FileText className="w-5 h-5 text-slate-400" />
-                                  )}
+                                  {a.hasSubmitted ? <CheckCircle2 className="w-5 h-5 text-emerald-500" /> : <FileText className="w-5 h-5 text-slate-400" />}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-1">
@@ -470,25 +444,24 @@ export default function StudentDashboard() {
                                 </div>
                               </div>
                               <div className="sm:ml-4 shrink-0">
-                                {a.hasSubmitted && a.submission?.autoGrade !== null ? (
+                                {a.hasSubmitted && a.submission && a.submission.autoGrade !== null ? (
                                   <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border ${getGradeBg(a.submission.teacherGrade ?? a.submission.autoGrade, a.totalMarks)}`}>
-                                    <span className={`text-xl font-bold tracking-tight ${getGradeColor(a.submission.teacherGrade ?? a.submission.autoGrade, a.totalMarks)}`}>
-                                      {a.submission.teacherGrade ?? a.submission.autoGrade}
-                                    </span>
+                                    <span className={`text-xl font-bold tracking-tight ${getGradeColor(a.submission.teacherGrade ?? a.submission.autoGrade, a.totalMarks)}`}>{a.submission.teacherGrade ?? a.submission.autoGrade}</span>
                                     <span className="text-xs opacity-70">/{a.totalMarks}</span>
                                   </div>
-                                ) : a.hasSubmitted ? (
-                                  <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200/60">
+                                ) : a.hasSubmitted && grading[a.submission?.id || ""] ? (
+                                  <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200/60">
                                     <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}>
-                                      <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-500 rounded-full" />
+                                      <div className="w-4 h-4 border-2 border-emerald-300 border-t-emerald-500 rounded-full" />
                                     </motion.div>
-                                    <span className="text-xs font-medium text-blue-600">Grading</span>
+                                    <span className="text-xs font-medium text-emerald-600">AI Grading...</span>
                                   </div>
+                                ) : a.hasSubmitted && a.submission ? (
+                                  <Button onClick={() => handleRegrade(a.submission.id)} size="sm" className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-sm shadow-emerald-200/50 h-9 text-xs">
+                                    <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Request AI Grade
+                                  </Button>
                                 ) : (
-                                  <Button
-                                    onClick={() => { setSelectedAssignment(a); setShowSubmitDialog(true); setUploadSuccess(false); }}
-                                    className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50"
-                                  >
+                                  <Button onClick={() => { setSelectedAssignment(a); setShowSubmitDialog(true); setUploadSuccess(false); }} className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50">
                                     <Upload className="w-4 h-4 mr-2" /> Submit
                                   </Button>
                                 )}
@@ -503,7 +476,7 @@ export default function StudentDashboard() {
               </motion.div>
             )}
 
-            {/* Grades */}
+            {/* ===== GRADES ===== */}
             {activeTab === "grades" && (
               <motion.div key="grades" {...pageTransition} className="space-y-6">
                 <div>
@@ -539,21 +512,26 @@ export default function StudentDashboard() {
                                     background: pct >= 80 ? "linear-gradient(135deg, #ecfdf5, #d1fae5)" : pct >= 60 ? "linear-gradient(135deg, #fffbeb, #fef3c7)" : "linear-gradient(135deg, #fef2f2, #fee2e2)",
                                     borderColor: pct >= 80 ? "#a7f3d0" : pct >= 60 ? "#fde68a" : "#fecaca",
                                   }}>
-                                    <span className={`text-2xl font-bold tracking-tighter ${getGradeColor(grade, total)}`}>
-                                      {grade}
-                                    </span>
+                                    <span className={`text-2xl font-bold tracking-tighter ${getGradeColor(grade, total)}`}>{grade}</span>
                                     <span className="text-xs font-medium text-slate-400">/{total}</span>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-slate-50 border border-slate-200">
-                                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}>
-                                      <div className="w-4 h-4 border-2 border-slate-200 border-t-slate-400 rounded-full" />
-                                    </motion.div>
-                                    <span className="text-xs font-medium text-slate-500">Grading...</span>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {grading[sub.id] ? (
+                                      <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}>
+                                          <div className="w-4 h-4 border-2 border-emerald-300 border-t-emerald-500 rounded-full" />
+                                        </motion.div>
+                                        <span className="text-xs font-medium text-emerald-600">Grading...</span>
+                                      </div>
+                                    ) : (
+                                      <Button onClick={() => handleRegrade(sub.id)} size="sm" className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-sm shadow-emerald-200/50 h-9 text-xs">
+                                        <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Request AI Grade
+                                      </Button>
+                                    )}
                                   </div>
                                 )}
                               </div>
-
                               {grade !== null && (
                                 <div className="space-y-1.5">
                                   <div className="flex items-center justify-between text-xs text-slate-400">
@@ -561,31 +539,21 @@ export default function StudentDashboard() {
                                     <span className="font-medium">{Math.round(pct)}%</span>
                                   </div>
                                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${pct}%` }}
-                                      transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }}
-                                      className={`h-full rounded-full ${pct >= 80 ? "bg-gradient-to-r from-emerald-400 to-teal-400" : pct >= 60 ? "bg-gradient-to-r from-amber-400 to-orange-400" : "bg-gradient-to-r from-red-400 to-rose-400"}`}
-                                    />
+                                    <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }} className={`h-full rounded-full ${pct >= 80 ? "bg-gradient-to-r from-emerald-400 to-teal-400" : pct >= 60 ? "bg-gradient-to-r from-amber-400 to-orange-400" : "bg-gradient-to-r from-red-400 to-rose-400"}`} />
                                   </div>
                                 </div>
                               )}
-
                               {(sub.autoFeedback || sub.teacherFeedback) && (
                                 <div className="space-y-2.5">
                                   {sub.autoFeedback && (
                                     <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white p-4">
-                                      <p className="text-xs font-semibold text-emerald-600 mb-1.5 flex items-center gap-1.5">
-                                        <Sparkles className="w-3 h-3" /> AI Feedback
-                                      </p>
+                                      <p className="text-xs font-semibold text-emerald-600 mb-1.5 flex items-center gap-1.5"><Sparkles className="w-3 h-3" /> AI Feedback</p>
                                       <p className="text-sm text-emerald-800/80 leading-relaxed whitespace-pre-wrap">{sub.autoFeedback}</p>
                                     </div>
                                   )}
                                   {sub.teacherFeedback && (
                                     <div className="rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/80 to-white p-4">
-                                      <p className="text-xs font-semibold text-violet-600 mb-1.5 flex items-center gap-1.5">
-                                        <GraduationCap className="w-3 h-3" /> Teacher Feedback
-                                      </p>
+                                      <p className="text-xs font-semibold text-violet-600 mb-1.5 flex items-center gap-1.5"><GraduationCap className="w-3 h-3" /> Teacher Feedback</p>
                                       <p className="text-sm text-violet-800/80 leading-relaxed whitespace-pre-wrap">{sub.teacherFeedback}</p>
                                     </div>
                                   )}
@@ -604,16 +572,14 @@ export default function StudentDashboard() {
         </div>
       </main>
 
-      {/* Submit Dialog */}
+      {/* ===== SUBMIT DIALOG ===== */}
       <Dialog open={showSubmitDialog} onOpenChange={(open) => { setShowSubmitDialog(open); setSelectedFile(null); setError(""); setUploadSuccess(false); setShowConfirmStep(false); setConfirmChecked(false); }}>
         <DialogContent className="sm:max-w-[440px] max-h-[90vh] overflow-y-auto border-0 shadow-2xl shadow-slate-900/[0.08]">
           <div className="h-1 bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 -mt-6 -mx-6 mb-0 rounded-t-2xl" />
           {uploadSuccess ? (
             <div className="py-10 text-center space-y-4">
               <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.1 }}>
-                <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-600" />
-                </div>
+                <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto"><CheckCircle2 className="w-8 h-8 text-emerald-600" /></div>
               </motion.div>
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
                 <h3 className="font-bold text-lg text-slate-900">Submitted Successfully!</h3>
@@ -634,22 +600,16 @@ export default function StudentDashboard() {
                       <input type="file" accept=".pdf,.docx,.txt" onChange={handleFileSelect} className="hidden" id="file-upload" />
                       {selectedFile ? (
                         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-3">
-                          <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center mx-auto">
-                            <FileText className="w-6 h-6 text-emerald-600" />
-                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center mx-auto"><FileText className="w-6 h-6 text-emerald-600" /></div>
                           <div>
                             <p className="font-semibold text-sm text-slate-700">{selectedFile.name}</p>
                             <p className="text-xs text-slate-400 mt-0.5">{(selectedFile.size / 1024).toFixed(1)} KB</p>
                           </div>
-                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setSelectedFile(null); }}>
-                            <X className="w-3 h-3 mr-1" /> Remove file
-                          </Button>
+                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setSelectedFile(null); }}><X className="w-3 h-3 mr-1" /> Remove file</Button>
                         </motion.div>
                       ) : (
                         <div className="space-y-3">
-                          <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto">
-                            <FileUp className="w-6 h-6 text-slate-400" />
-                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto"><FileUp className="w-6 h-6 text-slate-400" /></div>
                           <div>
                             <p className="text-sm font-semibold text-slate-700">Click to upload</p>
                             <p className="text-xs text-slate-400 mt-0.5">PDF, DOCX, or TXT &middot; Max 5MB</p>
@@ -660,61 +620,36 @@ export default function StudentDashboard() {
                   </div>
                   <DialogFooter className="gap-2">
                     <Button variant="outline" onClick={() => setShowSubmitDialog(false)} className="flex-1">Cancel</Button>
-                    <Button
-                      onClick={handleProceedToConfirm}
-                      disabled={!selectedFile}
-                      className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50"
-                    >
-                      <><CheckCircle2 className="w-4 h-4 mr-2" /> Review & Submit</>
+                    <Button onClick={handleProceedToConfirm} disabled={!selectedFile} className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50">
+                      <CheckCircle2 className="w-4 h-4 mr-2" /> Review & Submit
                     </Button>
                   </DialogFooter>
                 </>
               ) : (
                 <>
                   <DialogHeader className="pt-2">
-                    <DialogTitle className="text-lg flex items-center gap-2">
-                      <ShieldAlert className="w-5 h-5 text-amber-500" />
-                      Confirm Submission
-                    </DialogTitle>
+                    <DialogTitle className="text-lg flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-amber-500" /> Confirm Submission</DialogTitle>
                     <DialogDescription className="text-sm">Please review carefully before submitting</DialogDescription>
                   </DialogHeader>
-
                   <div className="space-y-4">
-                    {/* Warning Banner */}
-                    <motion.div
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 p-4"
-                    >
+                    <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 p-4">
                       <div className="flex gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-                          <AlertTriangle className="w-5 h-5 text-amber-600" />
-                        </div>
+                        <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0"><AlertTriangle className="w-5 h-5 text-amber-600" /></div>
                         <div>
                           <p className="font-semibold text-sm text-amber-800">This action cannot be undone</p>
-                          <p className="text-xs text-amber-600/80 mt-1 leading-relaxed">
-                            Once you submit this assignment, <strong>you will not be able to replace, edit, or withdraw</strong> your submission. Please double-check your file before confirming.
-                          </p>
+                          <p className="text-xs text-amber-600/80 mt-1 leading-relaxed">Once you submit this assignment, <strong>you will not be able to replace, edit, or withdraw</strong> your submission. Please double-check your file before confirming.</p>
                         </div>
                       </div>
                     </motion.div>
-
-                    {/* Submission Summary */}
                     <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 space-y-3">
                       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Submission Summary</p>
-
-                      {/* Assignment Info */}
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                          <BookOpen className="w-4 h-4 text-emerald-600" />
-                        </div>
+                        <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0"><BookOpen className="w-4 h-4 text-emerald-600" /></div>
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] text-slate-400">Assignment</p>
                           <p className="text-sm font-medium text-slate-700 truncate">{selectedAssignment?.title}</p>
                         </div>
                       </div>
-
-                      {/* File Info */}
                       <div className="flex items-center gap-3">
                         <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${selectedFile?.name.endsWith(".pdf") ? "bg-red-100" : selectedFile?.name.endsWith(".docx") ? "bg-blue-100" : "bg-slate-100"}`}>
                           <FileCheck className={`w-4 h-4 ${selectedFile?.name.endsWith(".pdf") ? "text-red-600" : selectedFile?.name.endsWith(".docx") ? "text-blue-600" : "text-slate-600"}`} />
@@ -722,62 +657,27 @@ export default function StudentDashboard() {
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] text-slate-400">File</p>
                           <p className="text-sm font-medium text-slate-700 truncate">{selectedFile?.name}</p>
-                          <p className="text-[11px] text-slate-400">
-                            {selectedFile?.name.split(".").pop()?.toUpperCase()} &middot; {(selectedFile ? selectedFile.size / 1024 : 0).toFixed(1)} KB
-                          </p>
+                          <p className="text-[11px] text-slate-400">{selectedFile?.name.split(".").pop()?.toUpperCase()} &middot; {(selectedFile ? selectedFile.size / 1024 : 0).toFixed(1)} KB</p>
                         </div>
                       </div>
-
-                      {/* Due Date / Marks */}
                       <div className="flex items-center gap-4 pt-1">
-                        {selectedAssignment?.dueDate && (
-                          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                            <Clock className="w-3 h-3" />
-                            <span>Due: {format(new Date(selectedAssignment.dueDate), "MMM d, yyyy")}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                          <Star className="w-3 h-3" />
-                          <span>{selectedAssignment?.totalMarks} marks</span>
-                        </div>
+                        {selectedAssignment?.dueDate && <div className="flex items-center gap-1.5 text-xs text-slate-400"><Clock className="w-3 h-3" /><span>Due: {format(new Date(selectedAssignment.dueDate), "MMM d, yyyy")}</span></div>}
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400"><Star className="w-3 h-3" /><span>{selectedAssignment?.totalMarks} marks</span></div>
                       </div>
                     </div>
-
-                    {/* Mandatory Checkbox */}
-                    <div
-                      className={`rounded-xl border p-4 transition-all duration-200 ${confirmChecked ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white"}`}
-                    >
+                    <div className={`rounded-xl border p-4 transition-all duration-200 ${confirmChecked ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white"}`}>
                       <label className="flex items-start gap-3 cursor-pointer">
-                        <Checkbox
-                          checked={confirmChecked}
-                          onCheckedChange={(checked) => setConfirmChecked(checked === true)}
-                          className="mt-0.5 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
-                        />
+                        <Checkbox checked={confirmChecked} onCheckedChange={(checked) => setConfirmChecked(checked === true)} className="mt-0.5 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500" />
                         <div>
-                          <p className="text-sm font-medium text-slate-700 leading-snug">
-                            I have reviewed my file and confirm this is my final submission
-                          </p>
-                          <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                            I understand that once submitted, this action is permanent and cannot be reversed.
-                          </p>
+                          <p className="text-sm font-medium text-slate-700 leading-snug">I have reviewed my file and confirm this is my final submission</p>
+                          <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">I understand that once submitted, this action is permanent and cannot be reversed.</p>
                         </div>
                       </label>
                     </div>
                   </div>
-
                   <DialogFooter className="gap-2 pt-1">
-                    <Button
-                      variant="outline"
-                      onClick={handleBackToFileSelect}
-                      className="flex-1"
-                    >
-                      <ArrowLeft className="w-4 h-4 mr-2" /> Go Back
-                    </Button>
-                    <Button
-                      onClick={handleSubmitFile}
-                      disabled={!confirmChecked || uploading}
-                      className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50"
-                    >
+                    <Button variant="outline" onClick={handleBackToFileSelect} className="flex-1"><ArrowLeft className="w-4 h-4 mr-2" /> Go Back</Button>
+                    <Button onClick={handleSubmitFile} disabled={!confirmChecked || uploading} className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50">
                       {uploading ? (
                         <><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /></motion.div><span className="ml-2">Submitting...</span></>
                       ) : (

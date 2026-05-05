@@ -43,7 +43,7 @@ export async function GET() {
       take: 5,
     });
 
-    // Fetch both teacherGrade and autoGrade to compute effective grades (teacherGrade takes priority)
+    // Fetch both teacherGrade and autoGrade to compute effective grades
     const gradedSubmissions = await db.submission.findMany({
       where: {
         assignment: { teacherId },

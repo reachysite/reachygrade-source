@@ -9,7 +9,7 @@ import StudentDashboard from "@/components/portal/student-dashboard";
 import TeacherDashboard from "@/components/portal/teacher-dashboard";
 import AdminDashboard from "@/components/portal/admin-dashboard";
 import { Toaster } from "sonner";
-import { GraduationCap, Download } from "lucide-react";
+ import { GraduationCap } from "lucide-react";
 
 function AppContent() {
   const { view, setUser, setLoading, isLoading } = useAppStore();
@@ -81,18 +81,6 @@ function AppContent() {
 
   return (
     <div className="relative">
-      {/* Download source code button — visible on auth page */}
-      {view === "auth" && (
-        <a
-          href="/api/download"
-          download="reachygrade-source.zip"
-          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium shadow-xl shadow-slate-900/20 hover:bg-slate-800 transition-all hover:scale-105 active:scale-95"
-          title="Download Source Code"
-        >
-          <Download className="w-4 h-4" />
-          <span>Download Source</span>
-        </a>
-      )}
       <AnimatePresence mode="wait">
         <motion.div
           key={view}

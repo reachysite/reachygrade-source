@@ -1,79 +1,73 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { PrismaClient } from "@prisma/client";
-import mammoth from "mammoth";
+import { db } from "@/lib/db";
+import { promises as fs } from "fs";
+import path from "path";
 
-// v2 - using pdfjs-dist for ESM-compatible PDF extraction
+const UPLOAD_DIR = path.join(process.cwd(), "upload");
 
-// ESM-compatible PDF text extraction using pdfjs-dist
-async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  
-  // Set worker path
-  const pdfjsWorker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default || "";
-
-  // Load the PDF document from buffer
-  const loadingTask = pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    useSystemFonts: true,
-  });
-  
-  const pdf = await loadingTask.promise;
-  const textParts: string[] = [];
-
-  // Extract text from each page
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items
-      .map((item: any) => item.str)
-      .join(" ");
-    textParts.push(pageText);
+async function ensureUploadDir() {
+  try {
+    await fs.access(UPLOAD_DIR);
+  } catch {
+    await fs.mkdir(UPLOAD_DIR, { recursive: true });
   }
+}
 
-  return textParts.join("\n").trim();
+async function extractTextFromPDF(buffer: Buffer): Promise<string> {
+  try {
+    const pdfParse = (await import("pdf-parse")).default;
+    const data = await pdfParse(buffer);
+    return data.text || "";
+  } catch (err) {
+    console.error("[UPLOAD] PDF parse error:", err);
+    return "";
+  }
+}
+
+async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.default.extractRawText({ buffer });
+    return result.value || "";
+  } catch (err) {
+    console.error("[UPLOAD] DOCX parse error:", err);
+    return "";
+  }
+}
+
+async function extractTextFromTXT(buffer: Buffer): Promise<string> {
+  return buffer.toString("utf-8");
 }
 
 export async function POST(request: NextRequest) {
-  const db = new PrismaClient();
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userRole = (session.user as { role: string }).role;
-    if (userRole !== "STUDENT") {
-      return NextResponse.json(
-        { error: "Only students can submit files" },
-        { status: 403 }
-      );
-    }
-
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const assignmentId = formData.get("assignmentId") as string | null;
 
-    if (!file || !assignmentId) {
-      return NextResponse.json(
-        { error: "File and assignment ID are required" },
-        { status: 400 }
-      );
+    if (!file) {
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    // Validate file type
-    const allowedExtensions = [".pdf", ".docx", ".txt"];
-    const fileExt = "." + file.name.split(".").pop()?.toLowerCase();
-    if (!allowedExtensions.includes(fileExt)) {
+    if (!assignmentId) {
+      return NextResponse.json({ error: "Assignment ID is required" }, { status: 400 });
+    }
+
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (!["pdf", "docx", "txt"].includes(ext || "")) {
       return NextResponse.json(
         { error: "Only PDF, DOCX, and TXT files are allowed" },
         { status: 400 }
       );
     }
 
-    // Check file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       return NextResponse.json(
         { error: "File size must be less than 5MB" },
@@ -81,74 +75,82 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    let extractedText = "";
+    const assignment = await db.assignment.findUnique({
+      where: { id: assignmentId },
+    });
 
-    // Extract text based on file type
-    if (fileExt === ".txt") {
-      extractedText = buffer.toString("utf-8");
-    } else if (fileExt === ".docx") {
-      const result = await mammoth.extractRawText({ buffer });
-      extractedText = result.value;
-    } else if (fileExt === ".pdf") {
-      extractedText = await extractTextFromPDF(buffer);
+    if (!assignment) {
+      return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
     }
 
-    if (!extractedText.trim()) {
-      return NextResponse.json(
-        {
-          error:
-            "Could not extract any text from the file. Please ensure the file contains readable text.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Check for existing submission
-    const userId = (session.user as { id: string }).id;
     const existingSubmission = await db.submission.findFirst({
       where: {
         assignmentId,
-        studentId: userId,
+        studentId: session.user.id,
       },
     });
 
     if (existingSubmission) {
       return NextResponse.json(
         { error: "You have already submitted this assignment" },
-        { status: 409 }
+        { status: 400 }
       );
     }
 
-    // Create submission
+    const buffer = Buffer.from(await file.arrayBuffer());
+    let content = "";
+
+    switch (ext) {
+      case "pdf":
+        content = await extractTextFromPDF(buffer);
+        break;
+      case "docx":
+        content = await extractTextFromDOCX(buffer);
+        break;
+      case "txt":
+        content = await extractTextFromTXT(buffer);
+        break;
+    }
+
+    if (!content.trim()) {
+      return NextResponse.json(
+        { error: "Could not extract text from the file. Please ensure the file contains readable text." },
+        { status: 400 }
+      );
+    }
+
+    await ensureUploadDir();
+    const timestamp = Date.now();
+    const uniqueName = `${timestamp}-${file.name}`;
+    const filePath = path.join(UPLOAD_DIR, uniqueName);
+    await fs.writeFile(filePath, buffer);
+
     const submission = await db.submission.create({
       data: {
-        content: extractedText,
+        content: content.trim(),
         fileName: file.name,
-        fileType: fileExt.replace(".", ""),
+        fileType: ext || "unknown",
         assignmentId,
-        studentId: userId,
+        studentId: session.user.id,
       },
       include: {
-        student: { select: { name: true, email: true } },
-        assignment: { select: { id: true, title: true, totalMarks: true } },
+        assignment: {
+          select: { title: true, totalMarks: true },
+        },
       },
     });
 
-    return NextResponse.json(
-      {
-        message: "File uploaded and processed successfully",
-        submission,
-      },
-      { status: 201 }
-    );
+    console.log(`[UPLOAD] Submission created: ${submission.id} for assignment ${assignmentId}`);
+
+    return NextResponse.json({
+      message: "Assignment submitted successfully",
+      submission,
+    });
   } catch (error) {
-    console.error("Error processing file upload:", error);
+    console.error("[UPLOAD] Error:", error);
     return NextResponse.json(
-      { error: "Failed to process file upload. Please try again." },
+      { error: "Failed to upload assignment. Please try again." },
       { status: 500 }
     );
-  } finally {
-    await db.$disconnect();
   }
 }

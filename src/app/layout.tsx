@@ -7,6 +7,7 @@ const geistSans = Geist({
   subsets: ["latin"],
 });
 
+
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
@@ -15,8 +16,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ReachyGrade - AI-Powered Assignment Portal",
   description: "Submit assignments, receive instant AI-powered feedback, and track your academic progress.",
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+   icons: {
+    icon: "/favicon.svg",
   },
 };
 

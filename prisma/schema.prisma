@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  relationMode      = "prisma"
 }
 
 model User {
@@ -12,7 +13,7 @@ model User {
   name          String
   email         String            @unique
   password      String
-  role          String            @default("STUDENT") // STUDENT, TEACHER, or ADMIN
+  role          String            @default("STUDENT")
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   assignments   Assignment[]      @relation("TeacherAssignments")
@@ -24,7 +25,7 @@ model Assignment {
   id          String       @id @default(cuid())
   title       String
   description String
-  modelAnswer String       // Expected answer for AI grading
+  modelAnswer String
   dueDate     DateTime?
   totalMarks  Int          @default(100)
   createdAt   DateTime     @default(now())
@@ -36,13 +37,13 @@ model Assignment {
 
 model Submission {
   id              String     @id @default(cuid())
-  content         String     // Extracted text from uploaded file
+  content         String
   fileName        String
-  fileType        String     // pdf, docx, txt
-  autoGrade       Int?       // 0 to totalMarks
-  autoFeedback    String?    // AI-generated feedback
-  teacherGrade    Int?       // Teacher override grade
-  teacherFeedback String?    // Teacher's additional feedback
+  fileType        String
+  autoGrade       Int?
+  autoFeedback    String?
+  teacherGrade    Int?
+  teacherFeedback String?
   assignmentId    String
   studentId       String
   createdAt       DateTime   @default(now())

@@ -1,6 +1,6 @@
  ReachyGrade is a fully functional web application that handles assignment creation, student submission, AI-powered grading, and grade management. The system supports three user roles with appropriate access controls, and the interface is clean, responsive, and easy to use.
 
-**Live Application** 
+### Live Application
 
  <img width="1725" height="843" alt="Screenshot 2026-05-13 130358" src="https://github.com/user-attachments/assets/9656ff49-9d6c-4ad0-96a7-80e375b7b33e" />
  <img width="1898" height="859" alt="Screenshot 2026-05-14 121754" src="https://github.com/user-attachments/assets/f5f6dd5d-8abc-4c51-ac51-802f27fd06c6" />

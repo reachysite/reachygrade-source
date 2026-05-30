@@ -2,44 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { promises as fs } from "fs";
-import path from "path";
-
-const UPLOAD_DIR = path.join(process.cwd(), "upload");
-
-async function ensureUploadDir() {
-  try {
-    await fs.access(UPLOAD_DIR);
-  } catch {
-    await fs.mkdir(UPLOAD_DIR, { recursive: true });
-  }
-}
-
-async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  try {
-    const pdfParse = (await import("pdf-parse")).default;
-    const data = await pdfParse(buffer);
-    return data.text || "";
-  } catch (err) {
-    console.error("[UPLOAD] PDF parse error:", err);
-    return "";
-  }
-}
-
-async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
-  try {
-    const mammoth = await import("mammoth");
-    const result = await mammoth.default.extractRawText({ buffer });
-    return result.value || "";
-  } catch (err) {
-    console.error("[UPLOAD] DOCX parse error:", err);
-    return "";
-  }
-}
-
-async function extractTextFromTXT(buffer: Buffer): Promise<string> {
-  return buffer.toString("utf-8");
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,19 +10,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const userRole = (session.user as { role: string }).role;
+    if (userRole !== "STUDENT") {
+      return NextResponse.json(
+        { error: "Only students can submit assignments" },
+        { status: 403 }
+      );
+    }
+
+    const userId = (session.user as { id: string }).id;
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const assignmentId = formData.get("assignmentId") as string | null;
 
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    if (!file || !assignmentId) {
+      return NextResponse.json(
+        { error: "File and assignment ID are required" },
+        { status: 400 }
+      );
     }
 
-    if (!assignmentId) {
-      return NextResponse.json({ error: "Assignment ID is required" }, { status: 400 });
-    }
-
-    const ext = file.name.split(".").pop()?.toLowerCase();
+    // Validate file type
+    const fileName = file.name;
+    const ext = fileName.split(".").pop()?.toLowerCase();
     if (!["pdf", "docx", "txt"].includes(ext || "")) {
       return NextResponse.json(
         { error: "Only PDF, DOCX, and TXT files are allowed" },
@@ -68,86 +41,102 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: "File size must be less than 5MB" },
-        { status: 400 }
-      );
-    }
-
-    const assignment = await db.assignment.findUnique({
-      where: { id: assignmentId },
-    });
-
-    if (!assignment) {
-      return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
-    }
-
+    // Check for existing submission
     const existingSubmission = await db.submission.findFirst({
       where: {
         assignmentId,
-        studentId: session.user.id,
+        studentId: userId,
       },
     });
 
     if (existingSubmission) {
       return NextResponse.json(
         { error: "You have already submitted this assignment" },
-        { status: 400 }
+        { status: 409 }
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    // Get the assignment
+    const assignment = await db.assignment.findUnique({
+      where: { id: assignmentId },
+    });
+
+    if (!assignment) {
+      return NextResponse.json(
+        { error: "Assignment not found" },
+        { status: 404 }
+      );
+    }
+
+    // Extract text from file based on type
     let content = "";
 
-    switch (ext) {
-      case "pdf":
-        content = await extractTextFromPDF(buffer);
-        break;
-      case "docx":
-        content = await extractTextFromDOCX(buffer);
-        break;
-      case "txt":
-        content = await extractTextFromTXT(buffer);
-        break;
+    if (ext === "txt") {
+      content = await file.text();
+    } else if (ext === "pdf") {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        // Dynamic import for pdf-parse
+        const pdfParse = (await import("pdf-parse")).default;
+        const pdfData = await pdfParse(buffer);
+        content = pdfData.text || "";
+      } catch (err) {
+        console.error("PDF parsing error:", err);
+        return NextResponse.json(
+          { error: "Failed to parse PDF file. Please try a different format." },
+          { status: 400 }
+        );
+      }
+    } else if (ext === "docx") {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const mammoth = await import("mammoth");
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        content = result.value || "";
+      } catch (err) {
+        console.error("DOCX parsing error:", err);
+        return NextResponse.json(
+          { error: "Failed to parse DOCX file. Please try a different format." },
+          { status: 400 }
+        );
+      }
     }
 
-    if (!content.trim()) {
+    if (!content || content.trim().length === 0) {
       return NextResponse.json(
-        { error: "Could not extract text from the file. Please ensure the file contains readable text." },
+        { error: "Could not extract any text from the file. The file may be empty or corrupted." },
         { status: 400 }
       );
     }
 
-    await ensureUploadDir();
-    const timestamp = Date.now();
-    const uniqueName = `${timestamp}-${file.name}`;
-    const filePath = path.join(UPLOAD_DIR, uniqueName);
-    await fs.writeFile(filePath, buffer);
-
+    // Create submission
     const submission = await db.submission.create({
       data: {
         content: content.trim(),
-        fileName: file.name,
-        fileType: ext || "unknown",
+        fileName,
+        fileType: ext || "txt",
         assignmentId,
-        studentId: session.user.id,
+        studentId: userId,
       },
       include: {
+        student: { select: { name: true, email: true } },
         assignment: {
-          select: { title: true, totalMarks: true },
+          select: {
+            id: true,
+            title: true,
+            totalMarks: true,
+          },
         },
       },
     });
 
-    console.log(`[UPLOAD] Submission created: ${submission.id} for assignment ${assignmentId}`);
-
-    return NextResponse.json({
-      message: "Assignment submitted successfully",
-      submission,
-    });
+    return NextResponse.json(
+      { message: "File uploaded successfully", submission },
+      { status: 201 }
+    );
   } catch (error) {
-    console.error("[UPLOAD] Error:", error);
+    console.error("Error uploading file:", error);
     return NextResponse.json(
       { error: "Failed to upload assignment. Please try again." },
       { status: 500 }

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -13,8 +13,8 @@ model User {
   email         String            @unique
   password      String
   role          String            @default("STUDENT")
-  createdAt     DateTime          @default(dbgenerated("CURRENT_TIMESTAMP"))
-  updatedAt     DateTime          @default(dbgenerated("CURRENT_TIMESTAMP"))
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
   assignments   Assignment[]      @relation("TeacherAssignments")
   submissions   Submission[]
   codes         InvitationCode[]  @relation("CodeCreator")
@@ -27,8 +27,8 @@ model Assignment {
   modelAnswer String
   dueDate     DateTime?
   totalMarks  Int          @default(100)
-  createdAt   DateTime     @default(dbgenerated("CURRENT_TIMESTAMP"))
-  updatedAt   DateTime     @default(dbgenerated("CURRENT_TIMESTAMP"))
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   teacherId   String
   teacher     User         @relation("TeacherAssignments", fields: [teacherId], references: [id])
   submissions Submission[]
@@ -45,8 +45,8 @@ model Submission {
   teacherFeedback String?
   assignmentId    String
   studentId       String
-  createdAt       DateTime   @default(dbgenerated("CURRENT_TIMESTAMP"))
-  updatedAt       DateTime   @default(dbgenerated("CURRENT_TIMESTAMP"))
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
   assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   student         User       @relation(fields: [studentId], references: [id])
 }
@@ -58,7 +58,7 @@ model InvitationCode {
   maxUses     Int      @default(1)
   usedCount   Int      @default(0)
   createdBy   String
-  createdAt   DateTime @default(dbgenerated("CURRENT_TIMESTAMP"))
+  createdAt   DateTime @default(now())
   expiresAt   DateTime?
   creator     User     @relation("CodeCreator", fields: [createdBy], references: [id])
 }

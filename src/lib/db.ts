@@ -1,17 +1,13 @@
 import { PrismaClient } from '@prisma/client'
 
-// Force-clear any stale cached Prisma client to avoid schema mismatch
-const g = globalThis as unknown as { prisma: PrismaClient | undefined }
-if (g.prisma) {
-  try { g.prisma.$disconnect().catch(() => {}) } catch {}
-  delete g.prisma
-}
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined }
 
-export const db = new PrismaClient({
-  log: ['query'],
-})
+export const db =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  })
 
-// Cache for production reuse
 if (process.env.NODE_ENV !== 'production') {
-  (globalThis as unknown as { prisma: PrismaClient }).prisma = db
+  globalForPrisma.prisma = db
 }

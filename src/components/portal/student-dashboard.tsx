@@ -1,15 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppStore, type Assignment, type Submission } from "@/store/app-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -81,6 +79,53 @@ export default function StudentDashboard() {
   const [grading, setGrading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
 
+  // ===== 3 separate fetches — each calls a real endpoint that exists =====
+  const fetchAssignments = useCallback(async () => {
+    try {
+      const res = await fetch("/api/assignments");
+      const data = await res.json();
+      if (res.ok) setAssignments(data.assignments);
+    } catch (err) {
+      console.error("[Dashboard] Failed to fetch assignments:", err);
+    }
+  }, [setAssignments]);
+
+  const fetchSubmissions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/submissions");
+      const data = await res.json();
+      if (res.ok) setSubmissions(data.submissions);
+    } catch (err) {
+      console.error("[Dashboard] Failed to fetch submissions:", err);
+    }
+  }, [setSubmissions]);
+
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      const res = await fetch("/api/student-analytics");
+      const data = await res.json();
+      if (res.ok) setAnalytics(data.analytics);
+    } catch (err) {
+      console.error("[Dashboard] Failed to fetch analytics:", err);
+    }
+  }, []);
+
+  // ===== Runs all 3 in parallel for speed =====
+  const fetchDashboard = useCallback(async () => {
+    await Promise.all([fetchAssignments(), fetchSubmissions(), fetchAnalytics()]);
+  }, [fetchAssignments, fetchSubmissions, fetchAnalytics]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAll = async () => {
+      setIsLoading(true);
+      await fetchDashboard();
+      if (!cancelled) setIsLoading(false);
+    };
+    loadAll();
+    return () => { cancelled = true; };
+  }, [fetchDashboard]);
+
   const handleRegrade = async (submissionId: string) => {
     setGrading(prev => ({ ...prev, [submissionId]: true }));
     try {
@@ -99,36 +144,9 @@ export default function StudentDashboard() {
       toast.error("Grading request failed.");
     } finally {
       setGrading(prev => ({ ...prev, [submissionId]: false }));
-      await Promise.all([fetchSubmissions(), fetchAnalytics()]);
+      await fetchDashboard();
     }
   };
-
-  const fetchAssignments = useCallback(async () => {
-    const res = await fetch("/api/assignments");
-    const data = await res.json();
-    if (res.ok) setAssignments(data.assignments);
-  }, [setAssignments]);
-
-  const fetchSubmissions = useCallback(async () => {
-    const res = await fetch("/api/submissions");
-    const data = await res.json();
-    if (res.ok) setSubmissions(data.submissions);
-  }, [setSubmissions]);
-
-  const fetchAnalytics = useCallback(async () => {
-    const res = await fetch("/api/student-analytics");
-    const data = await res.json();
-    if (res.ok) setAnalytics(data.analytics);
-  }, []);
-
-  useEffect(() => {
-    const loadAll = async () => {
-      setIsLoading(true);
-      await Promise.all([fetchAssignments(), fetchSubmissions(), fetchAnalytics()]);
-      setIsLoading(false);
-    };
-    loadAll();
-  }, [fetchAssignments, fetchSubmissions, fetchAnalytics]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -190,7 +208,7 @@ export default function StudentDashboard() {
       } catch { toast.error("Grading is taking longer than expected."); }
       finally { setGrading(prev => ({ ...prev, [data.submission.id]: false })); }
 
-      await Promise.all([fetchAssignments(), fetchSubmissions(), fetchAnalytics()]);
+      await fetchDashboard();
     } catch { setError("Upload failed. Please try again."); }
     finally { setUploading(false); }
   };
@@ -209,12 +227,16 @@ export default function StudentDashboard() {
     return "bg-red-50 border-red-200/80 text-red-700";
   };
 
-  const getGradeRing = (grade: number, total: number) => {
-    const pct = (grade / total) * 100;
-    if (pct >= 80) return "stroke-emerald-500";
-    if (pct >= 60) return "stroke-amber-500";
-    return "stroke-red-500";
-  };
+  // Memoize filtered lists
+  const pendingAssignments = useMemo(
+    () => assignments.filter(a => !a.hasSubmitted),
+    [assignments]
+  );
+
+  const gradedSubmissions = useMemo(
+    () => submissions.filter(s => s.autoGrade !== null),
+    [submissions]
+  );
 
   const sidebarItems: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
     { id: "overview", label: "Dashboard", icon: LayoutDashboard },
@@ -222,25 +244,22 @@ export default function StudentDashboard() {
     { id: "grades", label: "My Grades", icon: Award },
   ];
 
-  if (isLoading) {
-    return (
-      <div className="h-screen bg-slate-50/80 gradient-mesh">
-        <div className="flex h-full">
-          <div className="w-64 border-r bg-white/60 p-6 space-y-4 shrink-0">
-            <Skeleton className="h-10 w-40" />
-            {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}
-          </div>
-          <div className="flex-1 p-8 space-y-6 overflow-auto">
-            <Skeleton className="h-8 w-48" />
-            <div className="grid grid-cols-4 gap-4">
-              {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28 rounded-2xl" />)}
-            </div>
-            <Skeleton className="h-64 rounded-2xl" />
-          </div>
-        </div>
+  // Loading skeleton
+  const contentSkeleton = (
+    <div className="space-y-6">
+      <div>
+        <Skeleton className="h-8 w-48 mb-2" />
+        <Skeleton className="h-4 w-64" />
       </div>
-    );
-  }
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28 rounded-2xl" />)}
+      </div>
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Skeleton className="h-64 rounded-2xl" />
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+    </div>
+  );
 
   return (
     <div className="h-screen bg-slate-50/80 gradient-mesh flex">
@@ -309,6 +328,9 @@ export default function StudentDashboard() {
             </div>
           </div>
 
+          {isLoading ? (
+            contentSkeleton
+          ) : (
           <AnimatePresence mode="wait">
             {/* ===== OVERVIEW ===== */}
             {activeTab === "overview" && (
@@ -347,7 +369,7 @@ export default function StudentDashboard() {
                       <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700"><Clock className="w-4 h-4 text-amber-500" /> Pending Submissions</CardTitle>
                     </CardHeader>
                     <CardContent className="px-6 pb-5">
-                      {assignments.filter(a => !a.hasSubmitted).length === 0 ? (
+                      {pendingAssignments.length === 0 ? (
                         <div className="text-center py-8">
                           <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-300 mb-3" />
                           <p className="text-sm text-slate-400 font-medium">All caught up!</p>
@@ -355,7 +377,7 @@ export default function StudentDashboard() {
                         </div>
                       ) : (
                         <div className="space-y-2.5">
-                          {assignments.filter(a => !a.hasSubmitted).slice(0, 4).map((a) => (
+                          {pendingAssignments.slice(0, 4).map((a) => (
                             <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl bg-amber-50/60 border border-amber-100/60 hover:bg-amber-50 transition-colors group">
                               <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><Inbox className="w-4 h-4 text-amber-600" /></div>
                               <div className="flex-1 min-w-0">
@@ -376,7 +398,7 @@ export default function StudentDashboard() {
                       <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700"><Star className="w-4 h-4 text-emerald-500" /> Recent Grades</CardTitle>
                     </CardHeader>
                     <CardContent className="px-6 pb-5">
-                      {submissions.filter(s => s.autoGrade !== null).length === 0 ? (
+                      {gradedSubmissions.length === 0 ? (
                         <div className="text-center py-8">
                           <Award className="w-10 h-10 mx-auto text-slate-200 mb-3" />
                           <p className="text-sm text-slate-400 font-medium">No grades yet</p>
@@ -384,7 +406,7 @@ export default function StudentDashboard() {
                         </div>
                       ) : (
                         <div className="space-y-2.5">
-                          {submissions.filter(s => s.autoGrade !== null).slice(0, 4).map((sub) => {
+                          {gradedSubmissions.slice(0, 4).map((sub) => {
                             const grade = sub.teacherGrade ?? sub.autoGrade ?? 0;
                             const total = sub.assignment?.totalMarks || 100;
                             return (
@@ -569,6 +591,7 @@ export default function StudentDashboard() {
               </motion.div>
             )}
           </AnimatePresence>
+          )}
         </div>
       </main>
 
@@ -621,7 +644,7 @@ export default function StudentDashboard() {
                   <DialogFooter className="gap-2">
                     <Button variant="outline" onClick={() => setShowSubmitDialog(false)} className="flex-1">Cancel</Button>
                     <Button onClick={handleProceedToConfirm} disabled={!selectedFile} className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200/50">
-                      <CheckCircle2 className="w-4 h-4 mr-2" /> Review & Submit
+                      <><CheckCircle2 className="w-4 h-4 mr-2" /> Review & Submit</>
                     </Button>
                   </DialogFooter>
                 </>

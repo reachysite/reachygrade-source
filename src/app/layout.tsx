@@ -16,9 +16,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ReachyGrade - AI-Powered Assignment Portal",
   description: "Submit assignments, receive instant AI-powered feedback, and track your academic progress.",
-   icons: {
-    icon: "/favicon.svg",
-  },
 };
 
 export default function RootLayout({

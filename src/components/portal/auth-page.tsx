@@ -64,17 +64,20 @@ export default function AuthPage() {
 
       if (result?.error) {
         setError(result.error === "CredentialsSignin" ? "Invalid email or password" : result.error);
-      } else {
-        const sessionRes = await fetch("/api/auth/session");
-        const session = await sessionRes.json();
-        if (session?.user) {
-          setUser({
-            id: (session.user as { id: string }).id,
-            name: session.user.name || "",
-            email: session.user.email || "",
-            role: (session.user as { role: string }).role as "STUDENT" | "TEACHER" | "ADMIN",
-          });
-        }
+        return;
+      }
+
+      await new Promise((r) => setTimeout(r, 150));
+      const sessionRes = await fetch("/api/auth/session");
+      const session = await sessionRes.json();
+
+      if (session?.user) {
+        setUser({
+          id: (session.user as { id: string }).id,
+          name: session.user.name || "",
+          email: session.user.email || "",
+          role: (session.user as { role: string }).role as "STUDENT" | "TEACHER" | "ADMIN",
+        });
       }
     } catch {
       setError("An error occurred. Please try again.");

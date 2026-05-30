@@ -22,7 +22,6 @@ export async function POST(request: NextRequest) {
 
     const userId = (session.user as { id: string }).id;
 
-    // Receive pre-extracted text as JSON (no file saving to disk)
     const body = await request.json();
     const { assignmentId, content, fileName, fileType } = body;
 
@@ -40,7 +39,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check for existing submission
     const existingSubmission = await db.submission.findFirst({
       where: { assignmentId, studentId: userId },
     });
@@ -52,7 +50,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the assignment
     const assignment = await db.assignment.findUnique({
       where: { id: assignmentId },
     });
@@ -64,7 +61,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save submission to database only (no file on disk)
     const submission = await db.submission.create({
       data: {
         content: content.trim(),

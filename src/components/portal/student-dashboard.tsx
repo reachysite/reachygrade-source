@@ -176,7 +176,7 @@ export default function StudentDashboard() {
     setConfirmChecked(false);
   };
 
-    const extractTextFromFile = async (file: File): Promise<string> => {
+      const extractTextFromFile = async (file: File): Promise<string> => {
     const ext = file.name.split(".").pop()?.toLowerCase();
 
     if (ext === "txt") {
@@ -201,6 +201,28 @@ export default function StudentDashboard() {
         throw new Error("Could not read PDF. Please try a TXT file instead.");
       }
     }
+
+    if (ext === "docx") {
+      // DOCX needs server-side extraction (mammoth is Node.js only)
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString("base64");
+        const res = await fetch("/api/extract-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64, fileName: file.name }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not read DOCX");
+        return data.text.trim();
+      } catch (err) {
+        console.error("DOCX extraction error:", err);
+        throw new Error("Could not read DOCX. Please try a TXT or PDF file instead.");
+      }
+    }
+
+    throw new Error("Unsupported file type");
+  };
 
     if (ext === "docx") {
       try {

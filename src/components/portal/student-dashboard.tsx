@@ -176,16 +176,74 @@ export default function StudentDashboard() {
     setConfirmChecked(false);
   };
 
+    const extractTextFromFile = async (file: File): Promise<string> => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+
+    if (ext === "txt") {
+      return await file.text();
+    }
+
+    if (ext === "pdf") {
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          fullText += textContent.items.map((item: any) => item.str).join(" ") + "\n";
+        }
+        return fullText.trim();
+      } catch (err) {
+        console.error("Client-side PDF extraction error:", err);
+        throw new Error("Could not read PDF. Please try a TXT file instead.");
+      }
+    }
+
+    if (ext === "docx") {
+      try {
+        const mammoth = await import("mammoth");
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        return result.value.trim();
+      } catch (err) {
+        console.error("Client-side DOCX extraction error:", err);
+        throw new Error("Could not read DOCX. Please try a TXT file instead.");
+      }
+    }
+
+    throw new Error("Unsupported file type");
+  };
+
   const handleSubmitFile = async () => {
     if (!selectedFile || !selectedAssignment) return;
     setShowConfirmStep(false);
     setUploading(true);
     setError("");
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      formData.append("assignmentId", selectedAssignment.id);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      // Extract text on client side before sending to server
+      const content = await extractTextFromFile(selectedFile);
+
+      if (!content || content.trim().length === 0) {
+        setError("Could not extract any text from the file. It may be empty or corrupted.");
+        return;
+      }
+
+      const ext = selectedFile.name.split(".").pop()?.toLowerCase() || "txt";
+
+      // Send extracted text as JSON (no file parsing on server)
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignmentId: selectedAssignment.id,
+          content: content.trim(),
+          fileName: selectedFile.name,
+          fileType: ext,
+        }),
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Upload failed"); return; }
 
@@ -209,10 +267,12 @@ export default function StudentDashboard() {
       finally { setGrading(prev => ({ ...prev, [data.submission.id]: false })); }
 
       await fetchDashboard();
-    } catch { setError("Upload failed. Please try again."); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
+    }
     finally { setUploading(false); }
   };
-
+  
   const getGradeColor = (grade: number, total: number) => {
     const pct = (grade / total) * 100;
     if (pct >= 80) return "text-emerald-600";

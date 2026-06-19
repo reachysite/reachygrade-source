@@ -108,7 +108,7 @@ async function main() {
     },
   });
 
-  // Create sample submissions
+  // Create sample submissions with grades
   const submissions = [
     { student: students[0], assignment: a1, content: "Machine Learning is a branch of AI that enables computers to learn from data. The three main types are: 1) Supervised Learning uses labeled datasets for training. Examples include spam detection and image classification using algorithms like linear regression and decision trees. 2) Unsupervised Learning finds patterns in unlabeled data through clustering (K-Means) and dimensionality reduction (PCA), useful for customer segmentation. 3) Reinforcement Learning uses agents that learn through trial and error with rewards/penalties, applied in robotics and game playing.", fileName: "alice_ml.txt", fileType: "txt" },
     { student: students[1], assignment: a1, content: "ML enables computers to learn without explicit programming. Supervised learning trains on labeled data — linear regression for predictions, decision trees for classification. Unsupervised learning discovers patterns in unlabeled data via clustering and PCA. Reinforcement learning uses agents interacting with environments, receiving rewards for good actions. Used in self-driving cars and game AI.", fileName: "bob_ml.txt", fileType: "txt" },
@@ -116,7 +116,16 @@ async function main() {
     { student: students[3], assignment: a1, content: "Machine learning has three paradigms. Supervised learning maps inputs to outputs using labeled data. Algorithms include regression and classification. Unsupervised learning finds hidden patterns using clustering algorithms. Reinforcement learning trains agents through environment interaction.", fileName: "diana_ml.txt", fileType: "txt" },
   ];
 
-  for (const sub of submissions) {
+  const sampleGrades = [
+    { autoGrade: 85, autoFeedback: "Excellent work! You covered all three ML paradigms well with good examples. Minor improvement: mention deep learning as a subfield of supervised learning. Strong understanding demonstrated." },
+    { autoGrade: 72, autoFeedback: "Good coverage of the main ML types. Could improve by providing more specific algorithm examples for each paradigm. The reinforcement learning section was brief — consider adding more detail about Q-Learning and policy gradients." },
+    { autoGrade: 91, autoFeedback: "Outstanding explanation of database normalization! You clearly defined 1NF, 2NF, and 3NF with appropriate context. You also mentioned both benefits and drawbacks. Very well structured answer." },
+    { autoGrade: 58, autoFeedback: "You identified the three ML paradigms correctly but the answer lacks detail. Consider expanding on: specific algorithms for each type, real-world applications, and how they differ in their approach to learning from data." },
+  ];
+
+  for (let i = 0; i < submissions.length; i++) {
+    const sub = submissions[i];
+    const grade = sampleGrades[i];
     await db.submission.create({
       data: {
         content: sub.content,
@@ -124,6 +133,8 @@ async function main() {
         fileType: sub.fileType,
         assignmentId: sub.assignment.id,
         studentId: sub.student.id,
+        autoGrade: grade.autoGrade,
+        autoFeedback: grade.autoFeedback,
       },
     });
   }
